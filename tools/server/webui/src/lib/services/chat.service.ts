@@ -14,6 +14,7 @@ import {
 	UrlProtocol
 } from '$lib/enums';
 import type { ApiChatMessageContentPart, ApiChatCompletionToolCall } from '$lib/types/api';
+import type { ChatAttentionTrace } from '$lib/types/chat';
 import type { DatabaseMessageExtraMcpPrompt, DatabaseMessageExtraMcpResource } from '$lib/types';
 import { modelsStore } from '$lib/stores/models.svelte';
 
@@ -79,6 +80,7 @@ export class ChatService {
 			backend_sampling,
 			custom,
 			timings_per_token,
+			experimental_attention,
 			// Config options
 			disableReasoningParsing,
 			excludeReasoningFromContext
@@ -190,6 +192,9 @@ export class ChatService {
 		if (backend_sampling !== undefined) requestBody.backend_sampling = backend_sampling;
 
 		if (timings_per_token !== undefined) requestBody.timings_per_token = timings_per_token;
+		if (experimental_attention !== undefined) {
+			requestBody.experimental_attention = experimental_attention;
+		}
 
 		if (custom) {
 			try {
@@ -226,6 +231,7 @@ export class ChatService {
 					onError,
 					onReasoningChunk,
 					onToolCallChunk,
+					options.onAttention,
 					onModel,
 					onTimings,
 					conversationId,
@@ -310,6 +316,7 @@ export class ChatService {
 		onError?: (error: Error) => void,
 		onReasoningChunk?: (chunk: string) => void,
 		onToolCallChunk?: (chunk: string) => void,
+		onAttention?: (trace?: ChatAttentionTrace) => void,
 		onModel?: (model: string) => void,
 		onTimings?: (timings?: ChatMessageTimings, promptProgress?: ChatMessagePromptProgress) => void,
 		conversationId?: string,
@@ -404,6 +411,7 @@ export class ChatService {
 							const toolCalls = parsed.choices[0]?.delta?.tool_calls;
 							const timings = parsed.timings;
 							const promptProgress = parsed.prompt_progress;
+							const attention = parsed.attention;
 
 							const chunkModel = ChatService.extractModelName(parsed);
 							if (chunkModel && !modelEmitted) {
@@ -437,6 +445,10 @@ export class ChatService {
 							}
 
 							processToolCallDelta(toolCalls);
+
+							if (attention && !abortSignal?.aborted) {
+								onAttention?.(attention);
+							}
 						} catch (e) {
 							console.error('Error parsing JSON chunk:', e);
 						}

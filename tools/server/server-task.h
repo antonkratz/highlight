@@ -51,6 +51,7 @@ struct task_params {
     bool cache_prompt    = true; // remember the prompt to avoid reprocessing all prompt
     bool return_tokens   = false;
     bool return_progress = false;
+    bool experimental_attention = false;
 
     int32_t n_keep    =  0; // number of tokens to keep from initial prompt
     int32_t n_discard =  0; // number of tokens after n_keep that may be discarded when shifting context, 0 defaults to half
@@ -286,6 +287,29 @@ struct result_prompt_progress {
     json to_json() const;
 };
 
+struct result_attention_item {
+    int32_t token_index = -1;
+    int32_t start = 0;
+    int32_t end = 0;
+    float weight = 0.0f;
+    std::string token;
+
+    json to_json() const;
+};
+
+struct result_attention_trace {
+    int32_t token_index = 0;
+    int32_t layer = -1;
+    std::string prompt;
+    std::vector<result_attention_item> items;
+
+    bool empty() const {
+        return prompt.empty() || items.empty();
+    }
+
+    json to_json() const;
+};
+
 struct server_task_result {
     int id           = -1;
     int id_slot      = -1;
@@ -418,6 +442,7 @@ struct server_task_result_cmpl_partial : server_task_result {
     completion_token_output prob_output;
     result_timings timings;
     result_prompt_progress progress;
+    result_attention_trace attention;
 
     // response formatting
     bool               verbose  = false;

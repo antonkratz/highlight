@@ -67,6 +67,21 @@ export interface ChatMessageTimings {
 	agentic?: ChatMessageAgenticTimings;
 }
 
+export interface ChatAttentionItem {
+	token_index: number;
+	start: number;
+	end: number;
+	weight: number;
+	token: string;
+}
+
+export interface ChatAttentionTrace {
+	token_index: number;
+	layer?: number;
+	prompt: string;
+	items: ChatAttentionItem[];
+}
+
 export interface ChatMessageAgenticTimings {
 	turns: number;
 	toolCallsCount: number;
@@ -107,6 +122,7 @@ export interface ChatStreamCallbacks {
 	onReasoningChunk?: (chunk: string) => void;
 	onToolCallsStreaming?: (toolCalls: ApiChatCompletionToolCall[]) => void;
 	onAttachments?: (messageId: string, extras: DatabaseMessageExtra[]) => void;
+	onAttention?: (trace?: ChatAttentionTrace) => void;
 	onModel?: (model: string) => void;
 	onTimings?: (timings?: ChatMessageTimings, promptProgress?: ChatMessagePromptProgress) => void;
 	onAssistantTurnComplete?: (

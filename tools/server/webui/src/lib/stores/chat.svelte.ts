@@ -555,6 +555,10 @@ class ChatStore {
 		let resolvedModel: string | null = null;
 		let modelPersisted = false;
 		const convId = assistantMessage.convId;
+		const promptMessageId =
+			[...allMessages]
+				.reverse()
+				.find((message) => message.role === MessageRole.USER)?.id ?? null;
 
 		const recordModel = (modelName: string | null | undefined, persistImmediately = true): void => {
 			if (!modelName) return;
@@ -605,6 +609,12 @@ class ChatStore {
 			onToolCallsStreaming: (toolCalls) => {
 				const idx = conversationsStore.findMessageIndex(currentMessageId);
 				conversationsStore.updateMessageAtIndex(idx, { toolCalls: JSON.stringify(toolCalls) });
+			},
+			onAttention: (trace) => {
+				if (!trace || !promptMessageId) return;
+				const idx = conversationsStore.findMessageIndex(promptMessageId);
+				if (idx === -1) return;
+				conversationsStore.updateMessageAtIndex(idx, { attentionTrace: trace });
 			},
 			onAttachments: (messageId: string, extras: DatabaseMessageExtra[]) => {
 				if (!extras.length) return;
@@ -774,6 +784,7 @@ class ChatStore {
 				stream: true,
 				onChunk: streamCallbacks.onChunk,
 				onReasoningChunk: streamCallbacks.onReasoningChunk,
+				onAttention: streamCallbacks.onAttention,
 				onModel: streamCallbacks.onModel,
 				onTimings: streamCallbacks.onTimings,
 				onComplete: async (
@@ -1546,7 +1557,11 @@ class ChatStore {
 		const currentConfig = config();
 		const hasValue = (value: unknown): boolean =>
 			value !== undefined && value !== null && value !== '';
-		const apiOptions: Record<string, unknown> = { stream: true, timings_per_token: true };
+		const apiOptions: Record<string, unknown> = {
+			stream: true,
+			timings_per_token: true,
+			experimental_attention: true
+		};
 
 		if (isRouterMode()) {
 			const modelName = selectedModelName();

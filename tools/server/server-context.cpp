@@ -13,11 +13,16 @@
 #include "mtmd-helper.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cstddef>
 #include <cinttypes>
+#include <cstdlib>
+#include <cstring>
 #include <exception>
-#include <memory>
 #include <filesystem>
+#include <memory>
+#include <mutex>
+#include <numeric>
 
 // fix problem with std::min and std::max
 #if defined(_WIN32)
@@ -45,6 +50,123 @@ enum slot_state {
 enum server_state {
     SERVER_STATE_LOADING_MODEL,  // Server is starting up, model not fully loaded yet
     SERVER_STATE_READY,          // Server is ready and model is loaded
+};
+
+struct attention_top_token {
+    int32_t token_index = -1;
+    float weight = 0.0f;
+};
+
+struct attention_snapshot {
+    int32_t layer = -1;
+    std::vector<attention_top_token> top_tokens;
+
+    bool empty() const {
+        return top_tokens.empty();
+    }
+};
+
+struct attention_collector {
+    std::atomic<bool> enabled = false;
+
+    void clear() {
+        std::lock_guard<std::mutex> lock(mutex);
+        snapshot = attention_snapshot();
+    }
+
+    attention_snapshot get() const {
+        std::lock_guard<std::mutex> lock(mutex);
+        return snapshot;
+    }
+
+    static int32_t parse_layer(const char * name) {
+        const char * dash = std::strrchr(name, '-');
+        if (dash == nullptr || dash[1] == '\0') {
+            return -1;
+        }
+
+        return std::atoi(dash + 1);
+    }
+
+    static bool has_attention_name(const char * name) {
+        return std::strncmp(name, "kq_soft_max", sizeof("kq_soft_max") - 1) == 0;
+    }
+
+    static bool cb_eval(ggml_tensor * t, bool ask, void * user_data) {
+        auto * collector = static_cast<attention_collector *>(user_data);
+        if (collector == nullptr || !collector->enabled || t == nullptr || !has_attention_name(t->name)) {
+            return false;
+        }
+
+        if (ask) {
+            return true;
+        }
+
+        collector->capture(t);
+        return true;
+    }
+
+private:
+    void capture(ggml_tensor * t) {
+        if (t->type != GGML_TYPE_F32) {
+            return;
+        }
+
+        const int64_t n_kv     = t->ne[0];
+        const int64_t n_query  = t->ne[1];
+        const int64_t n_head   = t->ne[2];
+        const int64_t n_stream = t->ne[3];
+
+        if (n_kv <= 0 || n_query != 1 || n_head <= 0 || n_stream != 1) {
+            return;
+        }
+
+        std::vector<float> host_data;
+        const float * data = nullptr;
+
+        if (ggml_backend_buffer_is_host(t->buffer)) {
+            data = static_cast<const float *>(t->data);
+        } else {
+            host_data.resize(n_kv * n_query * n_head * n_stream);
+            ggml_backend_tensor_get(t, host_data.data(), 0, host_data.size() * sizeof(float));
+            data = host_data.data();
+        }
+
+        std::vector<float> weights(n_kv, 0.0f);
+        for (int64_t h = 0; h < n_head; ++h) {
+            const int64_t head_offset = n_kv * n_query * h;
+            for (int64_t i = 0; i < n_kv; ++i) {
+                weights[i] += data[head_offset + i];
+            }
+        }
+
+        for (float & weight : weights) {
+            weight /= n_head;
+        }
+
+        std::vector<int32_t> order(n_kv);
+        std::iota(order.begin(), order.end(), 0);
+
+        const size_t n_top = std::min<size_t>(5, order.size());
+        std::partial_sort(order.begin(), order.begin() + n_top, order.end(), [&](int32_t lhs, int32_t rhs) {
+            return weights[lhs] > weights[rhs];
+        });
+
+        attention_snapshot next;
+        next.layer = parse_layer(t->name);
+        next.top_tokens.reserve(n_top);
+        for (size_t i = 0; i < n_top; ++i) {
+            next.top_tokens.push_back({order[i], weights[order[i]]});
+        }
+
+        std::lock_guard<std::mutex> lock(mutex);
+        if (next.layer >= snapshot.layer) {
+            snapshot = std::move(next);
+        }
+    }
+
+    mutable std::mutex mutex;
+    attention_snapshot snapshot;
 };
 
 struct server_slot {
@@ -88,6 +210,7 @@ struct server_slot {
     std::vector<int32_t> i_batch_dft;
 
     std::vector<completion_token_output> generated_token_probs;
+    result_attention_trace attention_trace;
 
     bool has_next_token = true;
     bool has_new_line   = false;
@@ -181,6 +304,7 @@ struct server_slot {
         i_batch_dft.clear();
         generated_tokens.clear();
         generated_token_probs.clear();
+        attention_trace = result_attention_trace();
         json_schema = json();
 
         // clear speculative decoding stats
@@ -577,6 +701,8 @@ private:
 
     server_metrics metrics;
 
+    attention_collector attention_trace_collector;
+
     json json_webui_settings = json::object();
 
     // Necessary similarity of prompt for slot selection
@@ -638,6 +764,8 @@ private:
         SRV_INF("loading model '%s'\n", params.model.path.c_str());
 
         params_base = params;
+        params_base.cb_eval = attention_collector::cb_eval;
+        params_base.cb_eval_user_data = &attention_trace_collector;
 
         llama_init = common_init_from_params(params_base);
 
@@ -1439,6 +1567,57 @@ private:
         return true;
     }
 
+    result_attention_trace build_attention_trace(const server_slot & slot, const attention_snapshot & snapshot) {
+        result_attention_trace trace;
+
+        if (!slot.task || snapshot.empty()) {
+            return trace;
+        }
+
+        const llama_tokens & prompt_tokens = slot.task->tokens.get_text_tokens();
+        if (prompt_tokens.empty()) {
+            return trace;
+        }
+
+        trace.token_index = slot.n_decoded;
+        trace.layer = snapshot.layer;
+
+        std::map<int32_t, float> top_weights;
+        for (const auto & top_token : snapshot.top_tokens) {
+            if (top_token.token_index >= 0 && top_token.token_index < (int32_t) prompt_tokens.size()) {
+                top_weights[top_token.token_index] = top_token.weight;
+            }
+        }
+
+        if (top_weights.empty()) {
+            return trace;
+        }
+
+        trace.prompt.reserve(prompt_tokens.size() * 4);
+
+        for (int32_t i = 0; i < (int32_t) prompt_tokens.size(); ++i) {
+            const std::string piece = common_token_to_piece(ctx, prompt_tokens[i], true);
+            const int32_t start = trace.prompt.size();
+            trace.prompt += piece;
+            const int32_t end = trace.prompt.size();
+
+            const auto it = top_weights.find(i);
+            if (it == top_weights.end()) {
+                continue;
+            }
+
+            trace.items.push_back({
+                /*.token_index =*/ i,
+                /*.start       =*/ start,
+                /*.end         =*/ end,
+                /*.weight      =*/ it->second,
+                /*.token       =*/ piece,
+            });
+        }
+
+        return trace;
+    }
+
     void send_partial_response(server_slot & slot, const completion_token_output & tkn, bool is_progress) {
         auto res = std::make_unique<server_task_result_cmpl_partial>();
 
@@ -1454,6 +1633,7 @@ private:
         } else {
             res->content = tkn.text_to_send;
             res->tokens  = { tkn.tok };
+            res->attention = slot.attention_trace;
         }
 
         res->n_decoded             = slot.n_decoded;
@@ -2724,6 +2904,8 @@ private:
         // process the created batch of tokens
         for (int32_t i = 0; i < batch.n_tokens; i = i_next) {
             const int32_t n_tokens = std::min(n_batch, batch.n_tokens - i);
+            attention_trace_collector.enabled = false;
+            attention_trace_collector.clear();
 
             llama_batch batch_view = {
                 n_tokens,
@@ -2734,6 +2916,16 @@ private:
                 batch.seq_id   + i,
                 batch.logits   + i,
             };
+
+            for (auto & slot : slots) {
+                if (slot.task &&
+                    slot.task->params.experimental_attention &&
+                    slot.i_batch >= (int) i &&
+                    slot.i_batch < (int) (i + n_tokens)) {
+                    attention_trace_collector.enabled = true;
+                    break;
+                }
+            }
 
             const int ret = llama_decode(ctx, batch_view);
 
@@ -2793,6 +2985,9 @@ private:
 
             // on successful decode, restore the original batch size
             n_batch = llama_n_batch(ctx);
+
+            attention_snapshot attention_snapshot_cur = attention_trace_collector.get();
+            attention_trace_collector.enabled = false;
 
             // handle `n_cmpl > 1` tasks - when the main prompt is processed, activate all child tasks too
             for (auto & slot : slots) {
@@ -2862,6 +3057,7 @@ private:
                 }
 
                 const int tok_idx = slot.i_batch - i;
+                slot.attention_trace = result_attention_trace();
 
                 llama_token id = common_sampler_sample(slot.smpl.get(), ctx, tok_idx);
 
@@ -2889,6 +3085,10 @@ private:
 
                 if (slot.task->params.sampling.n_probs > 0) {
                     populate_token_probs(slot, result, slot.task->params.post_sampling_probs, params_base.special, tok_idx);
+                }
+
+                if (slot.task->params.experimental_attention) {
+                    slot.attention_trace = build_attention_trace(slot, attention_snapshot_cur);
                 }
 
                 if (!process_token(result, slot)) {

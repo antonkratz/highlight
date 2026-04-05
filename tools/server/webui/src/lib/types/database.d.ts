@@ -1,4 +1,9 @@
-import type { ChatMessageTimings, ChatRole, ChatMessageType } from '$lib/types/chat';
+import type {
+	ChatAttentionTrace,
+	ChatMessageTimings,
+	ChatRole,
+	ChatMessageType
+} from '$lib/types/chat';
 import { AttachmentType } from '$lib/enums';
 
 export interface McpServerOverride {
@@ -101,6 +106,7 @@ export interface DatabaseMessage {
 	children: string[];
 	extra?: DatabaseMessageExtra[];
 	timings?: ChatMessageTimings;
+	attentionTrace?: ChatAttentionTrace;
 	model?: string;
 }
 

@@ -1,5 +1,5 @@
 import type { ContentPartType, ServerModelStatus, ServerRole } from '$lib/enums';
-import type { ChatMessagePromptProgress, ChatRole } from './chat';
+import type { ChatAttentionTrace, ChatMessagePromptProgress, ChatRole } from './chat';
 
 export interface ApiChatCompletionToolFunction {
 	name: string;
@@ -239,6 +239,7 @@ export interface ApiChatCompletionRequest {
 	// Custom parameters (JSON string)
 	custom?: Record<string, unknown>;
 	timings_per_token?: boolean;
+	experimental_attention?: boolean;
 }
 
 export interface ApiChatCompletionToolCallFunctionDelta {
@@ -279,6 +280,7 @@ export interface ApiChatCompletionStreamChunk {
 		cache_n?: number;
 	};
 	prompt_progress?: ChatMessagePromptProgress;
+	attention?: ChatAttentionTrace;
 }
 
 export interface ApiChatCompletionResponse {

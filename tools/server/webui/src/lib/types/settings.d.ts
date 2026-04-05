@@ -1,5 +1,5 @@
 import type { SETTING_CONFIG_DEFAULT } from '$lib/constants';
-import type { ChatMessagePromptProgress, ChatMessageTimings } from './chat';
+import type { ChatAttentionTrace, ChatMessagePromptProgress, ChatMessageTimings } from './chat';
 import type { OpenAIToolDefinition } from './mcp';
 import type { DatabaseMessageExtra } from './database';
 import type { ParameterSource, SyncableParameterType, SettingsFieldType } from '$lib/enums';
@@ -54,11 +54,13 @@ export interface SettingsChatServiceOptions {
 	// Custom parameters
 	custom?: string;
 	timings_per_token?: boolean;
+	experimental_attention?: boolean;
 	// Callbacks
 	onChunk?: (chunk: string) => void;
 	onReasoningChunk?: (chunk: string) => void;
 	onToolCallChunk?: (chunk: string) => void;
 	onAttachments?: (extras: DatabaseMessageExtra[]) => void;
+	onAttention?: (trace?: ChatAttentionTrace) => void;
 	onModel?: (model: string) => void;
 	onTimings?: (timings?: ChatMessageTimings, promptProgress?: ChatMessagePromptProgress) => void;
 	onComplete?: (

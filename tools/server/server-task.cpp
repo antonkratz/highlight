@@ -67,6 +67,7 @@ json task_params::to_json(bool only_metrics) const {
             {"n_discard",                 n_discard},
             {"ignore_eos",                sampling.ignore_eos},
             {"stream",                    stream},
+            {"experimental_attention",    experimental_attention},
             {"n_probs",                   sampling.n_probs},
             {"min_keep",                  sampling.min_keep},
             {"chat_format",               common_chat_format_name(chat_parser_params.format)},
@@ -125,6 +126,7 @@ json task_params::to_json(bool only_metrics) const {
         {"n_discard",                 n_discard},
         {"ignore_eos",                sampling.ignore_eos},
         {"stream",                    stream},
+        {"experimental_attention",    experimental_attention},
         {"logit_bias",                format_logit_bias(sampling.logit_bias)},
         {"n_probs",                   sampling.n_probs},
         {"min_keep",                  sampling.min_keep},
@@ -262,6 +264,7 @@ task_params server_task::params_from_json_cmpl(
     params.cache_prompt     = json_value(data,       "cache_prompt",       defaults.cache_prompt);
     params.return_tokens    = json_value(data,       "return_tokens",      false);
     params.return_progress  = json_value(data,       "return_progress",    false);
+    params.experimental_attention = json_value(data, "experimental_attention", false);
     auto max_tokens         = json_value(data,       "max_tokens",         defaults.n_predict);
     params.n_predict        = json_value(data,       "n_predict",          json_value(data, "max_completion_tokens", max_tokens));
     params.n_indent         = json_value(data,       "n_indent",           defaults.n_indent);
@@ -640,6 +643,34 @@ json result_prompt_progress::to_json() const {
         {"processed", processed},
         {"time_ms",   time_ms},
     };
+}
+
+json result_attention_item::to_json() const {
+    return json {
+        {"token_index", token_index},
+        {"start",       start},
+        {"end",         end},
+        {"weight",      weight},
+        {"token",       token},
+    };
+}
+
+json result_attention_trace::to_json() const {
+    json out = json {
+        {"token_index", token_index},
+        {"prompt",      prompt},
+        {"items",       json::array()},
+    };
+
+    if (layer >= 0) {
+        out["layer"] = layer;
+    }
+
+    for (const auto & item : items) {
+        out["items"].push_back(item.to_json());
+    }
+
+    return out;
 }
 
 static inline std::string stop_type_to_str(stop_type type) {
@@ -1422,6 +1453,9 @@ json server_task_result_cmpl_partial::to_json_non_oaicompat() {
     if (is_progress) {
         res.push_back({"prompt_progress", progress.to_json()});
     }
+    if (!attention.empty()) {
+        res.push_back({"attention", attention.to_json()});
+    }
     if (!prob_output.probs.empty()) {
         res["completion_probabilities"] = completion_token_output::probs_vector_to_json({prob_output}, post_sampling_probs);
     }
@@ -1461,6 +1495,9 @@ json server_task_result_cmpl_partial::to_json_oaicompat() {
     }
     if (is_progress) {
         res.push_back({"prompt_progress", progress.to_json()});
+    }
+    if (!attention.empty()) {
+        res.push_back({"attention", attention.to_json()});
     }
 
     return res;
@@ -1515,6 +1552,9 @@ json server_task_result_cmpl_partial::to_json_oaicompat_chat() {
         }
         if (is_progress) {
             last_json.push_back({"prompt_progress", progress.to_json()});
+        }
+        if (!attention.empty()) {
+            last_json.push_back({"attention", attention.to_json()});
         }
     }
 
