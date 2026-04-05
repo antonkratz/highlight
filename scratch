@@ -20,3 +20,7 @@ Sun Apr  5 10:19:01 PM JST 2026 {{{
 --ctx-size 8192 \
 --flash-attn off
 }}}
+
+Sun Apr  5 10:19:01 PM JST 2026 {{{
+codex resume 019d5d6e-1c80-7b22-b601-1b757585b2c1
+}}}
