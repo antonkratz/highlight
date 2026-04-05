@@ -81,6 +81,7 @@ export class ChatService {
 			custom,
 			timings_per_token,
 			experimental_attention,
+			stream_delay_ms,
 			// Config options
 			disableReasoningParsing,
 			excludeReasoningFromContext
@@ -234,6 +235,7 @@ export class ChatService {
 					options.onAttention,
 					onModel,
 					onTimings,
+					stream_delay_ms,
 					conversationId,
 					signal
 				);
@@ -319,6 +321,7 @@ export class ChatService {
 		onAttention?: (trace?: ChatAttentionTrace) => void,
 		onModel?: (model: string) => void,
 		onTimings?: (timings?: ChatMessageTimings, promptProgress?: ChatMessagePromptProgress) => void,
+		streamDelayMs = 0,
 		conversationId?: string,
 		abortSignal?: AbortSignal
 	): Promise<void> {
@@ -432,7 +435,7 @@ export class ChatService {
 								finalizeOpenToolCallBatch();
 								aggregatedContent += content;
 								if (!abortSignal?.aborted) {
-									onChunk?.(content);
+									await ChatService.emitWithDelay(content, streamDelayMs, onChunk, abortSignal);
 								}
 							}
 
@@ -440,13 +443,21 @@ export class ChatService {
 								finalizeOpenToolCallBatch();
 								fullReasoningContent += reasoningContent;
 								if (!abortSignal?.aborted) {
-									onReasoningChunk?.(reasoningContent);
+									await ChatService.emitWithDelay(
+										reasoningContent,
+										streamDelayMs,
+										onReasoningChunk,
+										abortSignal
+									);
 								}
 							}
 
 							processToolCallDelta(toolCalls);
 
 							if (attention && !abortSignal?.aborted) {
+								if (streamDelayMs > 0) {
+									await ChatService.sleep(streamDelayMs);
+								}
 								onAttention?.(attention);
 							}
 						} catch (e) {
@@ -482,6 +493,41 @@ export class ChatService {
 		} finally {
 			reader.releaseLock();
 		}
+	}
+
+	private static sleep(ms: number): Promise<void> {
+		return new Promise((resolve) => setTimeout(resolve, ms));
+	}
+
+	private static async emitWithDelay(
+		text: string,
+		delayMs: number,
+		callback: ((chunk: string) => void) | undefined,
+		abortSignal?: AbortSignal
+	): Promise<void> {
+		if (!callback || abortSignal?.aborted) {
+			return;
+		}
+
+		if (delayMs <= 0 || text.length <= 1) {
+			callback(text);
+			return;
+		}
+
+		const parts = ChatService.splitForStreaming(text);
+		for (const part of parts) {
+			if (abortSignal?.aborted) {
+				return;
+			}
+
+			callback(part);
+			await ChatService.sleep(delayMs);
+		}
+	}
+
+	private static splitForStreaming(text: string): string[] {
+		const matches = text.match(/(\s+|[^\s]+)/g);
+		return matches && matches.length > 0 ? matches : [text];
 	}
 
 	/**

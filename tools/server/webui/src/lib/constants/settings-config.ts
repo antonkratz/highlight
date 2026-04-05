@@ -25,6 +25,7 @@ export const SETTING_CONFIG_DEFAULT: Record<string, string | number | boolean | 
 	autoMicOnEmpty: false,
 	fullHeightCodeBlocks: false,
 	showRawModelNames: false,
+	streamDelayMs: 0,
 	mcpServers: '[]',
 	mcpServerUsageStats: '{}', // JSON object: { [serverId]: usageCount }
 	agenticMaxTurns: 10,
@@ -131,6 +132,8 @@ export const SETTING_CONFIG_INFO: Record<string, string> = {
 		'Always display code blocks at their full natural height, overriding any height limits.',
 	showRawModelNames:
 		'Display full raw model identifiers (e.g. "ggml-org/GLM-4.7-Flash-GGUF:Q8_0") instead of parsed names with badges.',
+	streamDelayMs:
+		'Delay each streamed update in the browser so the output and prompt focus are easier to follow. This does not slow the model itself.',
 	mcpServers:
 		'Configure MCP servers as a JSON list. Use the form in the MCP Client settings section to edit.',
 	mcpServerUsageStats:

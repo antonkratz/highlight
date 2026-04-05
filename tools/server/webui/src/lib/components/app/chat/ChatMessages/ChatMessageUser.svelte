@@ -48,43 +48,164 @@
 
 	let isMultiline = $state(false);
 	let messageElement: HTMLElement | undefined = $state();
-	const currentConfig = config();
+	let currentConfig = $derived(config());
 
 	type AttentionSegment = {
 		text: string;
 		hit?: ChatAttentionItem & { rank: number };
 	};
 
-	let attentionSegments = $derived.by(() => {
+	type AttentionPreview = {
+		label: string;
+		text: string;
+		tokenIndex: number;
+	};
+
+	function isSpecialToken(token: string): boolean {
+		return /^<\|.*\|>$/.test(token) || token.startsWith('<|im_') || token.startsWith('<im_');
+	}
+
+	function overlaps(a: ChatAttentionItem, b: ChatAttentionItem): boolean {
+		return Math.max(a.start, b.start) < Math.min(a.end, b.end);
+	}
+
+	function getPromptSlice(
+		prompt: string,
+		userContent: string
+	): { text: string; offset: number; exact: boolean } {
+		const trimmedContent = userContent.trim();
+		if (!trimmedContent) {
+			return { text: prompt, offset: 0, exact: false };
+		}
+
+		const start = prompt.lastIndexOf(trimmedContent);
+		if (start === -1) {
+			return { text: prompt, offset: 0, exact: false };
+		}
+
+		return {
+			text: prompt.slice(start, start + trimmedContent.length),
+			offset: start,
+			exact: true
+		};
+	}
+
+	function getRenderableItems(
+		trace: NonNullable<DatabaseMessage['attentionTrace']>,
+		promptOffset: number,
+		promptLength: number
+	): { items: ChatAttentionItem[]; useFullPrompt: boolean } {
+		const inRange = trace.items
+			.filter((item) => item.end > item.start)
+			.filter((item) => item.end > promptOffset && item.start < promptOffset + promptLength);
+
+		const withoutSpecialTokens = inRange.filter((item) => !isSpecialToken(item.token));
+		if (withoutSpecialTokens.length > 0) {
+			return {
+				useFullPrompt: false,
+				items: withoutSpecialTokens.map((item) => ({
+					...item,
+					start: Math.max(item.start, promptOffset) - promptOffset,
+					end: Math.min(item.end, promptOffset + promptLength) - promptOffset
+				}))
+			};
+		}
+
+		if (inRange.length > 0) {
+			return {
+				useFullPrompt: false,
+				items: inRange.map((item) => ({
+					...item,
+					start: Math.max(item.start, promptOffset) - promptOffset,
+					end: Math.min(item.end, promptOffset + promptLength) - promptOffset
+				}))
+			};
+		}
+
+		return {
+			useFullPrompt: true,
+			items: trace.items
+				.filter((item) => item.end > item.start)
+				.map((item) => ({
+					...item,
+					start: item.start,
+					end: item.end
+				}))
+		};
+	}
+
+	let attentionView = $derived.by(() => {
 		const trace = message.attentionTrace;
 		if (!trace?.prompt || !trace.items?.length) {
-			return [] as AttentionSegment[];
+			return {
+				layer: trace?.layer,
+				tokenIndex: trace?.token_index ?? 0,
+				prompt: '',
+				segments: [] as AttentionSegment[],
+				previews: [] as AttentionPreview[]
+			};
+		}
+
+		const promptSlice = getPromptSlice(trace.prompt, message.content);
+		const renderableResult = getRenderableItems(trace, promptSlice.offset, promptSlice.text.length);
+		const prompt = renderableResult.useFullPrompt ? trace.prompt : promptSlice.text;
+		const renderableItems = renderableResult.items
+			.filter((item) => item.end > item.start)
+			.filter((item) => item.end <= prompt.length);
+		const candidates = [...renderableItems]
+			.sort((a, b) => b.weight - a.weight);
+
+		const selected: Array<ChatAttentionItem & { rank: number }> = [];
+		for (const item of candidates) {
+			if (selected.some((existing) => overlaps(existing, item))) {
+				continue;
+			}
+
+			selected.push({ ...item, rank: selected.length + 1 });
+			if (selected.length === 3) {
+				break;
+			}
 		}
 
 		const segments: AttentionSegment[] = [];
-		const items = [...trace.items]
-			.sort((a, b) => a.start - b.start)
-			.map((item, index) => ({ ...item, rank: index + 1 }));
+		const highlightedItems =
+			selected.length > 0
+				? [...selected].sort((a, b) => a.start - b.start)
+				: [...renderableItems]
+						.sort((a, b) => a.start - b.start)
+						.map((item, index) => ({ ...item, rank: index + 1 }));
 		let cursor = 0;
 
-		for (const item of items) {
+		for (const item of highlightedItems) {
 			if (item.start > cursor) {
-				segments.push({ text: trace.prompt.slice(cursor, item.start) });
+				segments.push({ text: prompt.slice(cursor, item.start) });
 			}
 
 			segments.push({
-				text: trace.prompt.slice(item.start, item.end),
+				text: prompt.slice(item.start, item.end),
 				hit: item
 			});
 
 			cursor = item.end;
 		}
 
-		if (cursor < trace.prompt.length) {
-			segments.push({ text: trace.prompt.slice(cursor) });
+		if (cursor < prompt.length) {
+			segments.push({ text: prompt.slice(cursor) });
 		}
 
-		return segments;
+		const previews = selected.map((item) => ({
+			label: `#${item.rank}`,
+			text: prompt.slice(item.start, item.end).trim() || prompt.slice(item.start, item.end),
+			tokenIndex: item.token_index
+		}));
+
+		return {
+			layer: trace.layer,
+			tokenIndex: trace.token_index,
+			prompt,
+			segments,
+			previews
+		};
 	});
 
 	$effect(() => {
@@ -144,26 +265,38 @@
 			</Card>
 		{/if}
 
-		{#if message.attentionTrace && attentionSegments.length > 0}
+		{#if message.attentionTrace && attentionView.segments.length > 0}
 			<Card class="max-w-[80%] border-primary/15 bg-background/80 px-3.75 py-3 backdrop-blur-md">
 				<div class="mb-2 flex items-center justify-between gap-3 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
 					<span>Live prompt focus</span>
 					<span>
-						{#if message.attentionTrace.layer !== undefined}
-							L{message.attentionTrace.layer + 1}
+						{#if attentionView.layer !== undefined}
+							L{attentionView.layer + 1}
 						{/if}
-						t{message.attentionTrace.token_index}
+						t{attentionView.tokenIndex}
 					</span>
+				</div>
+
+				<div class="mb-3 grid gap-2 md:grid-cols-3">
+					{#each attentionView.previews as preview}
+						<div class="attention-preview-card">
+							<div class="attention-preview-card__label">
+								<span>{preview.label}</span>
+								<span>t{preview.tokenIndex}</span>
+							</div>
+							<div class="attention-preview-card__text">{preview.text}</div>
+						</div>
+					{/each}
 				</div>
 
 				<div
 					class="max-h-52 overflow-y-auto whitespace-pre-wrap break-words font-mono text-xs leading-6 text-foreground/90"
 				>
-					{#each attentionSegments as segment}
+					{#each attentionView.segments as segment}
 						{#if segment.hit}
 							<span
 								class="attention-hit"
-								style={`--attention-strength:${Math.max(0.18, segment.hit.weight)};`}
+								style={`--attention-strength:${Math.max(0.18, segment.hit.weight)}; --attention-rank:${segment.hit.rank};`}
 								title={`prompt token ${segment.hit.token_index} • weight ${segment.hit.weight.toFixed(3)}`}
 							>
 								<span class="attention-hit__marker">{segment.hit.rank}</span>{segment.text}
@@ -205,10 +338,18 @@
 		background:
 			linear-gradient(
 				180deg,
-				rgba(251, 191, 36, 0.18) 0%,
-				rgba(251, 191, 36, calc(var(--attention-strength) * 0.7)) 100%
+				hsla(calc(24 + (var(--attention-rank) - 1) * 18), 92%, 62%, 0.18) 0%,
+				hsla(
+					calc(24 + (var(--attention-rank) - 1) * 18),
+					92%,
+					62%,
+					calc(var(--attention-strength) * 0.72)
+				)
+					100%
 			);
-		box-shadow: inset 0 2px 0 rgba(251, 191, 36, calc(var(--attention-strength) + 0.15));
+		box-shadow:
+			inset 0 2px 0 hsla(calc(24 + (var(--attention-rank) - 1) * 18), 92%, 62%, calc(var(--attention-strength) + 0.12)),
+			0 0 0 1px hsla(calc(24 + (var(--attention-rank) - 1) * 18), 92%, 52%, 0.28);
 		padding: 0.15rem 0.05rem 0.05rem;
 	}
 
@@ -220,5 +361,34 @@
 		font-weight: 700;
 		line-height: 1;
 		color: rgb(180 83 9);
+	}
+
+	.attention-preview-card {
+		border: 1px solid rgb(251 191 36 / 0.22);
+		border-radius: 0.7rem;
+		background: rgb(251 191 36 / 0.06);
+		padding: 0.55rem 0.7rem;
+	}
+
+	.attention-preview-card__label {
+		display: flex;
+		justify-content: space-between;
+		gap: 0.75rem;
+		margin-bottom: 0.35rem;
+		font-family: var(--font-mono, monospace);
+		font-size: 10px;
+		letter-spacing: 0.12em;
+		text-transform: uppercase;
+		color: rgb(161 98 7);
+	}
+
+	.attention-preview-card__text {
+		font-family: var(--font-mono, monospace);
+		font-size: 12px;
+		line-height: 1.5;
+		color: inherit;
+		opacity: 0.92;
+		white-space: pre-wrap;
+		word-break: break-word;
 	}
 </style>

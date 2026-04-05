@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { afterNavigate } from '$app/navigation';
 	import { ChatFormHelperText, ChatForm } from '$lib/components/app';
+	import { config, settingsStore } from '$lib/stores/settings.svelte';
 	import { onMount } from 'svelte';
 
 	interface Props {
@@ -35,6 +36,8 @@
 	let message = $derived(initialMessage);
 	let previousIsLoading = $derived(isLoading);
 	let previousInitialMessage = $derived(initialMessage);
+	let currentConfig = $derived(config());
+	let streamDelayMs = $derived(Number(currentConfig.streamDelayMs ?? 0));
 
 	// Sync message when initialMessage prop changes (e.g., after draft restoration)
 	$effect(() => {
@@ -100,6 +103,11 @@
 
 		previousIsLoading = isLoading;
 	});
+
+	function handleStreamDelayInput(event: Event) {
+		const target = event.currentTarget as HTMLInputElement;
+		settingsStore.updateConfig('streamDelayMs', Number(target.value));
+	}
 </script>
 
 <div class="relative mx-auto max-w-[48rem]">
@@ -117,6 +125,23 @@
 		onSystemPromptClick={handleSystemPromptClick}
 		onUploadedFileRemove={handleUploadedFileRemove}
 	/>
+
+	<div class="mt-2 flex items-center gap-3 px-2 text-xs text-muted-foreground">
+		<label class="min-w-0 shrink-0 uppercase tracking-[0.16em]" for="stream-delay-ms">
+			Slow down
+		</label>
+		<input
+			id="stream-delay-ms"
+			type="range"
+			min="0"
+			max="300"
+			step="10"
+			value={streamDelayMs}
+			oninput={handleStreamDelayInput}
+			class="h-2 w-full accent-primary"
+		/>
+		<span class="w-12 shrink-0 text-right font-mono">{streamDelayMs}ms</span>
+	</div>
 </div>
 
 <ChatFormHelperText show={showHelperText} />

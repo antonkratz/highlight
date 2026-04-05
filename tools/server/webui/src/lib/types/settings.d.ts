@@ -55,6 +55,7 @@ export interface SettingsChatServiceOptions {
 	custom?: string;
 	timings_per_token?: boolean;
 	experimental_attention?: boolean;
+	stream_delay_ms?: number;
 	// Callbacks
 	onChunk?: (chunk: string) => void;
 	onReasoningChunk?: (chunk: string) => void;

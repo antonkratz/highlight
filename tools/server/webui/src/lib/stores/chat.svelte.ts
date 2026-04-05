@@ -1563,6 +1563,10 @@ class ChatStore {
 			experimental_attention: true
 		};
 
+		if (hasValue(currentConfig.streamDelayMs)) {
+			apiOptions.stream_delay_ms = Number(currentConfig.streamDelayMs);
+		}
+
 		if (isRouterMode()) {
 			const modelName = selectedModelName();
 			if (modelName) apiOptions.model = modelName;
