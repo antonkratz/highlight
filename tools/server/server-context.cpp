@@ -23,6 +23,9 @@
 #include <memory>
 #include <mutex>
 #include <numeric>
+#include <limits>
+#include <set>
+#include <tuple>
 
 // fix problem with std::min and std::max
 #if defined(_WIN32)
@@ -55,6 +58,7 @@ enum server_state {
 struct attention_top_token {
     int32_t token_index = -1;
     float weight = 0.0f;
+    int32_t head = -1;
 };
 
 struct attention_snapshot {
@@ -132,31 +136,25 @@ private:
             data = host_data.data();
         }
 
-        std::vector<float> weights(n_kv, 0.0f);
-        for (int64_t h = 0; h < n_head; ++h) {
-            const int64_t head_offset = n_kv * n_query * h;
-            for (int64_t i = 0; i < n_kv; ++i) {
-                weights[i] += data[head_offset + i];
-            }
-        }
-
-        for (float & weight : weights) {
-            weight /= n_head;
-        }
-
-        std::vector<int32_t> order(n_kv);
-        std::iota(order.begin(), order.end(), 0);
-
-        const size_t n_top = std::min<size_t>(5, order.size());
-        std::partial_sort(order.begin(), order.begin() + n_top, order.end(), [&](int32_t lhs, int32_t rhs) {
-            return weights[lhs] > weights[rhs];
-        });
-
         attention_snapshot next;
         next.layer = parse_layer(t->name);
-        next.top_tokens.reserve(n_top);
-        for (size_t i = 0; i < n_top; ++i) {
-            next.top_tokens.push_back({order[i], weights[order[i]]});
+        next.top_tokens.reserve(n_head);
+
+        for (int64_t h = 0; h < n_head; ++h) {
+            const int64_t head_offset = n_kv * n_query * h;
+            float best_weight = -std::numeric_limits<float>::infinity();
+            int32_t best_index = -1;
+            for (int64_t i = 0; i < n_kv; ++i) {
+                const float weight = data[head_offset + i];
+                if (weight > best_weight) {
+                    best_weight = weight;
+                    best_index = static_cast<int32_t>(i);
+                }
+            }
+
+            if (best_index >= 0) {
+                next.top_tokens.push_back({best_index, best_weight, static_cast<int32_t>(h)});
+            }
         }
 
         std::lock_guard<std::mutex> lock(mutex);
@@ -1582,37 +1580,47 @@ private:
         trace.token_index = slot.n_decoded;
         trace.layer = snapshot.layer;
 
-        std::map<int32_t, float> top_weights;
-        for (const auto & top_token : snapshot.top_tokens) {
-            if (top_token.token_index >= 0 && top_token.token_index < (int32_t) prompt_tokens.size()) {
-                top_weights[top_token.token_index] = top_token.weight;
-            }
-        }
-
-        if (top_weights.empty()) {
-            return trace;
-        }
-
         trace.prompt.reserve(prompt_tokens.size() * 4);
+        std::vector<std::pair<int32_t, int32_t>> positions(prompt_tokens.size(), {0, 0});
 
         for (int32_t i = 0; i < (int32_t) prompt_tokens.size(); ++i) {
             const std::string piece = common_token_to_piece(ctx, prompt_tokens[i], true);
             const int32_t start = trace.prompt.size();
             trace.prompt += piece;
             const int32_t end = trace.prompt.size();
+            positions[i] = {start, end};
+        }
 
-            const auto it = top_weights.find(i);
-            if (it == top_weights.end()) {
+        if (positions.empty()) {
+            return trace;
+        }
+
+        trace.items.reserve(snapshot.top_tokens.size());
+        std::set<std::tuple<int32_t, int32_t, int32_t>> seen;
+        for (const auto & top_token : snapshot.top_tokens) {
+            if (top_token.token_index < 0 || top_token.token_index >= (int32_t) positions.size()) {
                 continue;
             }
 
-            trace.items.push_back({
-                /*.token_index =*/ i,
-                /*.start       =*/ start,
-                /*.end         =*/ end,
-                /*.weight      =*/ it->second,
-                /*.token       =*/ piece,
-            });
+            const auto [start, end] = positions[top_token.token_index];
+            if (end <= start) {
+                continue;
+            }
+
+            const auto key = std::make_tuple(top_token.token_index, top_token.head, start);
+            if (seen.find(key) != seen.end()) {
+                continue;
+            }
+
+            seen.insert(key);
+            result_attention_item item;
+            item.token_index = top_token.token_index;
+            item.start = start;
+            item.end = end;
+            item.weight = top_token.weight;
+            item.token = trace.prompt.substr(start, end - start);
+            item.head = top_token.head;
+            trace.items.push_back(item);
         }
 
         return trace;

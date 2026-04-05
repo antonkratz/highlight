@@ -50,16 +50,41 @@
 	let messageElement: HTMLElement | undefined = $state();
 	let currentConfig = $derived(config());
 
+	type AttentionHit = ChatAttentionItem & {
+		rank: number;
+		color: string;
+		light: string;
+		strong: string;
+	};
+
 	type AttentionSegment = {
 		text: string;
-		hit?: ChatAttentionItem & { rank: number };
+		hit?: AttentionHit;
 	};
 
 	type AttentionPreview = {
 		label: string;
 		text: string;
 		tokenIndex: number;
+		head?: number;
+		color: string;
+		light: string;
+		strong: string;
 	};
+
+	const HEAD_COLORS = ['#F97316', '#FBBF24', '#34D399', '#0EA5E9', '#A855F7', '#EF4444'];
+
+	function headColor(head?: number): string {
+		if (head === undefined || head < 0) {
+			return HEAD_COLORS[0];
+		}
+		return HEAD_COLORS[head % HEAD_COLORS.length];
+	}
+
+	function withAlpha(hex: string, alpha: string): string {
+		const normalized = hex.replace('#', '');
+		return `#${normalized}${alpha}`;
+	}
 
 	function isSpecialToken(token: string): boolean {
 		return /^<\|.*\|>$/.test(token) || token.startsWith('<|im_') || token.startsWith('<im_');
@@ -155,25 +180,41 @@
 		const candidates = [...renderableItems]
 			.sort((a, b) => b.weight - a.weight);
 
-		const selected: Array<ChatAttentionItem & { rank: number }> = [];
+		const selected: AttentionHit[] = [];
 		for (const item of candidates) {
 			if (selected.some((existing) => overlaps(existing, item))) {
 				continue;
 			}
 
-			selected.push({ ...item, rank: selected.length + 1 });
+			const color = headColor(item.head);
+			selected.push({
+				...item,
+				rank: selected.length + 1,
+				color,
+				light: withAlpha(color, '33'),
+				strong: withAlpha(color, 'bf')
+			});
 			if (selected.length === 3) {
 				break;
 			}
 		}
 
 		const segments: AttentionSegment[] = [];
-		const highlightedItems =
+		const highlightedItems: AttentionHit[] =
 			selected.length > 0
 				? [...selected].sort((a, b) => a.start - b.start)
 				: [...renderableItems]
 						.sort((a, b) => a.start - b.start)
-						.map((item, index) => ({ ...item, rank: index + 1 }));
+						.map((item, index) => {
+							const color = headColor(item.head);
+							return {
+								...item,
+								rank: index + 1,
+								color,
+								light: withAlpha(color, '33'),
+								strong: withAlpha(color, 'bf')
+							};
+						});
 		let cursor = 0;
 
 		for (const item of highlightedItems) {
@@ -196,7 +237,11 @@
 		const previews = selected.map((item) => ({
 			label: `#${item.rank}`,
 			text: prompt.slice(item.start, item.end).trim() || prompt.slice(item.start, item.end),
-			tokenIndex: item.token_index
+			tokenIndex: item.token_index,
+			head: item.head,
+			color: item.color,
+			light: item.light,
+			strong: item.strong
 		}));
 
 		return {
@@ -279,10 +324,15 @@
 
 				<div class="mb-3 grid gap-2 md:grid-cols-3">
 					{#each attentionView.previews as preview}
-						<div class="attention-preview-card">
+						<div
+							class="attention-preview-card"
+							style={`--attention-card-color:${preview.color};--attention-card-light:${preview.light};--attention-card-strong:${preview.strong};`}
+						>
 							<div class="attention-preview-card__label">
 								<span>{preview.label}</span>
-								<span>t{preview.tokenIndex}</span>
+								<span class="attention-preview-card__head">
+									Head {preview.head ?? 0} • t{preview.tokenIndex}
+								</span>
 							</div>
 							<div class="attention-preview-card__text">{preview.text}</div>
 						</div>
@@ -296,7 +346,7 @@
 						{#if segment.hit}
 							<span
 								class="attention-hit"
-								style={`--attention-strength:${Math.max(0.18, segment.hit.weight)}; --attention-rank:${segment.hit.rank};`}
+							style={`--attention-strength:${Math.max(0.18, segment.hit.weight)}; --attention-color:${segment.hit.color}; --attention-light:${segment.hit.light}; --attention-strong:${segment.hit.strong};`}
 								title={`prompt token ${segment.hit.token_index} • weight ${segment.hit.weight.toFixed(3)}`}
 							>
 								<span class="attention-hit__marker">{segment.hit.rank}</span>{segment.text}
@@ -335,21 +385,14 @@
 	.attention-hit {
 		position: relative;
 		border-radius: 0.35rem;
-		background:
-			linear-gradient(
+		background: linear-gradient(
 				180deg,
-				hsla(calc(24 + (var(--attention-rank) - 1) * 18), 92%, 62%, 0.18) 0%,
-				hsla(
-					calc(24 + (var(--attention-rank) - 1) * 18),
-					92%,
-					62%,
-					calc(var(--attention-strength) * 0.72)
-				)
-					100%
+				var(--attention-light, rgba(249, 115, 22, 0.2)) 0%,
+				var(--attention-color, rgba(249, 115, 22, 0.35)) 100%
 			);
 		box-shadow:
-			inset 0 2px 0 hsla(calc(24 + (var(--attention-rank) - 1) * 18), 92%, 62%, calc(var(--attention-strength) + 0.12)),
-			0 0 0 1px hsla(calc(24 + (var(--attention-rank) - 1) * 18), 92%, 52%, 0.28);
+			inset 0 2px 0 var(--attention-strong, rgba(31, 99, 212, 0.9)),
+			0 0 0 1px var(--attention-strong, rgba(31, 99, 212, 0.55));
 		padding: 0.15rem 0.05rem 0.05rem;
 	}
 
@@ -364,9 +407,13 @@
 	}
 
 	.attention-preview-card {
-		border: 1px solid rgb(251 191 36 / 0.22);
+		border: 1px solid var(--attention-card-strong, rgba(249, 115, 22, 0.6));
 		border-radius: 0.7rem;
-		background: rgb(251 191 36 / 0.06);
+		background: linear-gradient(
+			180deg,
+			var(--attention-card-light, rgba(249, 115, 22, 0.06)) 0%,
+			var(--attention-card-color, rgba(249, 115, 22, 0.12)) 100%
+		);
 		padding: 0.55rem 0.7rem;
 	}
 
@@ -380,6 +427,11 @@
 		letter-spacing: 0.12em;
 		text-transform: uppercase;
 		color: rgb(161 98 7);
+	}
+
+	.attention-preview-card__head {
+		font-size: 9px;
+		letter-spacing: 0.1em;
 	}
 
 	.attention-preview-card__text {

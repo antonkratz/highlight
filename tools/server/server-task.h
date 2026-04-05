@@ -292,6 +292,7 @@ struct result_attention_item {
     int32_t start = 0;
     int32_t end = 0;
     float weight = 0.0f;
+    int32_t head = -1;
     std::string token;
 
     json to_json() const;

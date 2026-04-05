@@ -652,6 +652,7 @@ json result_attention_item::to_json() const {
         {"end",         end},
         {"weight",      weight},
         {"token",       token},
+        {"head",        head},
     };
 }
 

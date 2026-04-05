@@ -73,6 +73,7 @@ export interface ChatAttentionItem {
 	end: number;
 	weight: number;
 	token: string;
+	head?: number;
 }
 
 export interface ChatAttentionTrace {
