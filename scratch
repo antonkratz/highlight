@@ -1,0 +1,22 @@
+Sun Apr  5 10:19:01 PM JST 2026 {{{
+Copy exactly the secret code and nothing else.
+
+  Noise:
+  A1 B2 C3 D4 E5 F6 G7
+
+  Secret code: XK-491-QM
+
+  More noise:
+  Z9 Y8 X7 W6 V5 U4
+
+  Answer:
+}}}
+
+Sun Apr  5 10:19:01 PM JST 2026 {{{
+/home/akratz/work/llama.cpp/build/bin/llama-server \
+-m /home/akratz/Downloads/gguf/Qwen2.5.1-Coder-7B-Instruct-Q4_K_M.gguf \
+--host 127.0.0.1 \
+--port 8080 \
+--ctx-size 8192 \
+--flash-attn off
+}}}
