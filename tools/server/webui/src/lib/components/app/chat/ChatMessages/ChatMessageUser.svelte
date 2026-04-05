@@ -157,19 +157,19 @@
 
 		const selected: Array<ChatAttentionItem & { rank: number }> = [];
 		for (const item of candidates) {
-		if (selected.some((existing) => overlaps(existing, item))) {
-			continue;
-		}
+			if (selected.some((existing) => overlaps(existing, item))) {
+				continue;
+			}
 
-		selected.push({ ...item, rank: selected.length + 1 });
-		if (selected.length === 6) {
-			break;
+			selected.push({ ...item, rank: selected.length + 1 });
+			if (selected.length === 3) {
+				break;
+			}
 		}
-	}
 
 		const segments: AttentionSegment[] = [];
 		const highlightedItems =
-				selected.length > 0
+			selected.length > 0
 				? [...selected].sort((a, b) => a.start - b.start)
 				: [...renderableItems]
 						.sort((a, b) => a.start - b.start)
