@@ -660,6 +660,7 @@ json result_attention_trace::to_json() const {
     json out = json {
         {"token_index", token_index},
         {"prompt",      prompt},
+        {"prefix_end",  prefix_end},
         {"items",       json::array()},
     };
 

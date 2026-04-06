@@ -302,6 +302,7 @@ struct result_attention_trace {
     int32_t token_index = 0;
     int32_t layer = -1;
     std::string prompt;
+    int32_t prefix_end = 0;
     std::vector<result_attention_item> items;
 
     bool empty() const {

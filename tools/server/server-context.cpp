@@ -1580,15 +1580,25 @@ private:
         trace.token_index = slot.n_decoded;
         trace.layer = snapshot.layer;
 
-        trace.prompt.reserve(prompt_tokens.size() * 4);
-        std::vector<std::pair<int32_t, int32_t>> positions(prompt_tokens.size(), {0, 0});
+        llama_tokens live_tokens = prompt_tokens;
+        live_tokens.reserve(prompt_tokens.size() + slot.generated_token_probs.size());
+        for (const auto & token : slot.generated_token_probs) {
+            live_tokens.push_back(token.tok);
+        }
 
-        for (int32_t i = 0; i < (int32_t) prompt_tokens.size(); ++i) {
-            const std::string piece = common_token_to_piece(ctx, prompt_tokens[i], true);
+        trace.prompt.reserve(live_tokens.size() * 4);
+        std::vector<std::pair<int32_t, int32_t>> positions(live_tokens.size(), {0, 0});
+
+        for (int32_t i = 0; i < (int32_t) live_tokens.size(); ++i) {
+            const std::string piece = common_token_to_piece(ctx, live_tokens[i], true);
             const int32_t start = trace.prompt.size();
             trace.prompt += piece;
             const int32_t end = trace.prompt.size();
             positions[i] = {start, end};
+
+            if (i + 1 == (int32_t) prompt_tokens.size()) {
+                trace.prefix_end = end;
+            }
         }
 
         if (positions.empty()) {

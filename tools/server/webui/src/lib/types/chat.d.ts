@@ -80,6 +80,7 @@ export interface ChatAttentionTrace {
 	token_index: number;
 	layer?: number;
 	prompt: string;
+	prefix_end?: number;
 	items: ChatAttentionItem[];
 }
 

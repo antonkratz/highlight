@@ -59,6 +59,8 @@
 
 	type AttentionSegment = {
 		text: string;
+		region: 'prefix' | 'generated';
+		boundary?: boolean;
 		hit?: AttentionHit;
 	};
 
@@ -94,69 +96,8 @@
 		return Math.max(a.start, b.start) < Math.min(a.end, b.end);
 	}
 
-	function getPromptSlice(
-		prompt: string,
-		userContent: string
-	): { text: string; offset: number; exact: boolean } {
-		const trimmedContent = userContent.trim();
-		if (!trimmedContent) {
-			return { text: prompt, offset: 0, exact: false };
-		}
-
-		const start = prompt.lastIndexOf(trimmedContent);
-		if (start === -1) {
-			return { text: prompt, offset: 0, exact: false };
-		}
-
-		return {
-			text: prompt.slice(start, start + trimmedContent.length),
-			offset: start,
-			exact: true
-		};
-	}
-
-	function getRenderableItems(
-		trace: NonNullable<DatabaseMessage['attentionTrace']>,
-		promptOffset: number,
-		promptLength: number
-	): { items: ChatAttentionItem[]; useFullPrompt: boolean } {
-		const inRange = trace.items
-			.filter((item) => item.end > item.start)
-			.filter((item) => item.end > promptOffset && item.start < promptOffset + promptLength);
-
-		const withoutSpecialTokens = inRange.filter((item) => !isSpecialToken(item.token));
-		if (withoutSpecialTokens.length > 0) {
-			return {
-				useFullPrompt: false,
-				items: withoutSpecialTokens.map((item) => ({
-					...item,
-					start: Math.max(item.start, promptOffset) - promptOffset,
-					end: Math.min(item.end, promptOffset + promptLength) - promptOffset
-				}))
-			};
-		}
-
-		if (inRange.length > 0) {
-			return {
-				useFullPrompt: false,
-				items: inRange.map((item) => ({
-					...item,
-					start: Math.max(item.start, promptOffset) - promptOffset,
-					end: Math.min(item.end, promptOffset + promptLength) - promptOffset
-				}))
-			};
-		}
-
-		return {
-			useFullPrompt: true,
-			items: trace.items
-				.filter((item) => item.end > item.start)
-				.map((item) => ({
-					...item,
-					start: item.start,
-					end: item.end
-				}))
-		};
+	function segmentRegion(start: number, prefixEnd: number): 'prefix' | 'generated' {
+		return start < prefixEnd ? 'prefix' : 'generated';
 	}
 
 	let attentionView = $derived.by(() => {
@@ -166,18 +107,20 @@
 				layer: trace?.layer,
 				tokenIndex: trace?.token_index ?? 0,
 				prompt: '',
+				prefixEnd: 0,
 				segments: [] as AttentionSegment[],
-				previews: [] as AttentionPreview[]
+				previews: [] as AttentionPreview[],
+				hasGenerated: false
 			};
 		}
 
-		const promptSlice = getPromptSlice(trace.prompt, message.content);
-		const renderableResult = getRenderableItems(trace, promptSlice.offset, promptSlice.text.length);
-		const prompt = renderableResult.useFullPrompt ? trace.prompt : promptSlice.text;
-		const renderableItems = renderableResult.items
+		const prompt = trace.prompt;
+		const prefixEnd = Math.max(0, Math.min(trace.prefix_end ?? prompt.length, prompt.length));
+		const renderableItems = trace.items
 			.filter((item) => item.end > item.start)
 			.filter((item) => item.end <= prompt.length);
 		const candidates = [...renderableItems]
+			.filter((item) => !isSpecialToken(item.token))
 			.sort((a, b) => b.weight - a.weight);
 
 		const selected: AttentionHit[] = [];
@@ -217,13 +160,31 @@
 						});
 		let cursor = 0;
 
+		let insertedBoundary = false;
+		const maybeInsertBoundary = (start: number) => {
+			if (!insertedBoundary && prefixEnd > 0 && prefixEnd < prompt.length && start >= prefixEnd) {
+				segments.push({
+					text: '',
+					region: 'generated',
+					boundary: true
+				});
+				insertedBoundary = true;
+			}
+		};
+
 		for (const item of highlightedItems) {
 			if (item.start > cursor) {
-				segments.push({ text: prompt.slice(cursor, item.start) });
+				maybeInsertBoundary(cursor);
+				segments.push({
+					text: prompt.slice(cursor, item.start),
+					region: segmentRegion(cursor, prefixEnd)
+				});
 			}
 
+			maybeInsertBoundary(item.start);
 			segments.push({
 				text: prompt.slice(item.start, item.end),
+				region: segmentRegion(item.start, prefixEnd),
 				hit: item
 			});
 
@@ -231,7 +192,11 @@
 		}
 
 		if (cursor < prompt.length) {
-			segments.push({ text: prompt.slice(cursor) });
+			maybeInsertBoundary(cursor);
+			segments.push({
+				text: prompt.slice(cursor),
+				region: segmentRegion(cursor, prefixEnd)
+			});
 		}
 
 		const previews = selected.map((item) => ({
@@ -248,8 +213,10 @@
 			layer: trace.layer,
 			tokenIndex: trace.token_index,
 			prompt,
+			prefixEnd,
 			segments,
-			previews
+			previews,
+			hasGenerated: prefixEnd < prompt.length
 		};
 	});
 
@@ -313,13 +280,20 @@
 		{#if message.attentionTrace && attentionView.segments.length > 0}
 			<Card class="max-w-[80%] border-primary/15 bg-background/80 px-3.75 py-3 backdrop-blur-md">
 				<div class="mb-2 flex items-center justify-between gap-3 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
-					<span>Live prompt focus</span>
+					<span>Live context focus</span>
 					<span>
 						{#if attentionView.layer !== undefined}
 							L{attentionView.layer + 1}
 						{/if}
 						t{attentionView.tokenIndex}
 					</span>
+				</div>
+
+				<div class="mb-3 flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
+					<span class="attention-legend attention-legend--prefix">Original prefix</span>
+					{#if attentionView.hasGenerated}
+						<span class="attention-legend attention-legend--generated">Generated continuation</span>
+					{/if}
 				</div>
 
 				<div class="mb-3 grid gap-2 md:grid-cols-3">
@@ -340,19 +314,21 @@
 				</div>
 
 				<div
-					class="max-h-52 overflow-y-auto whitespace-pre-wrap break-words font-mono text-xs leading-6 text-foreground/90"
+					class="attention-context max-h-52 overflow-y-auto whitespace-pre-wrap break-words font-mono text-xs leading-6 text-foreground/90"
 				>
 					{#each attentionView.segments as segment}
-						{#if segment.hit}
+						{#if segment.boundary}
+							<div class="attention-boundary">Generated continuation</div>
+						{:else if segment.hit}
 							<span
-								class="attention-hit"
+								class={`attention-hit attention-hit--${segment.region}`}
 							style={`--attention-strength:${Math.max(0.18, segment.hit.weight)}; --attention-color:${segment.hit.color}; --attention-light:${segment.hit.light}; --attention-strong:${segment.hit.strong};`}
-								title={`prompt token ${segment.hit.token_index} • weight ${segment.hit.weight.toFixed(3)}`}
+								title={`context token ${segment.hit.token_index} • weight ${segment.hit.weight.toFixed(3)}`}
 							>
 								<span class="attention-hit__marker">{segment.hit.rank}</span>{segment.text}
 							</span>
 						{:else}
-							<span>{segment.text}</span>
+							<span class={`attention-segment attention-segment--${segment.region}`}>{segment.text}</span>
 						{/if}
 					{/each}
 				</div>
@@ -382,6 +358,14 @@
 </div>
 
 <style>
+	.attention-context {
+		position: relative;
+	}
+
+	.attention-segment--generated {
+		opacity: 0.92;
+	}
+
 	.attention-hit {
 		position: relative;
 		border-radius: 0.35rem;
@@ -404,6 +388,32 @@
 		font-weight: 700;
 		line-height: 1;
 		color: rgb(180 83 9);
+	}
+
+	.attention-boundary {
+		display: block;
+		margin: 0.55rem 0 0.35rem;
+		padding-top: 0.45rem;
+		border-top: 1px dashed rgb(148 163 184 / 0.45);
+		font-size: 10px;
+		letter-spacing: 0.14em;
+		text-transform: uppercase;
+		color: rgb(100 116 139);
+	}
+
+	.attention-legend {
+		padding: 0.18rem 0.42rem;
+		border-radius: 999px;
+		border: 1px solid rgb(148 163 184 / 0.35);
+	}
+
+	.attention-legend--prefix {
+		background: rgb(148 163 184 / 0.08);
+	}
+
+	.attention-legend--generated {
+		background: rgb(14 165 233 / 0.1);
+		border-color: rgb(14 165 233 / 0.28);
 	}
 
 	.attention-preview-card {
