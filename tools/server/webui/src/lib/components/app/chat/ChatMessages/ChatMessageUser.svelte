@@ -49,7 +49,9 @@
 	let isMultiline = $state(false);
 	let messageElement: HTMLElement | undefined = $state();
 	let currentConfig = $derived(config());
+	let disableAutoScroll = $derived(Boolean(config().disableAutoScroll));
 	let attentionContextElement: HTMLDivElement | undefined = $state();
+	let liveAttentionWrapper: HTMLDivElement | undefined = $state();
 
 	type AttentionHit = ChatAttentionItem & {
 		rank: number;
@@ -303,10 +305,14 @@
 		{/if}
 
 		{#if message.attentionTrace && attentionView.segments.length > 0}
-			<Card class="max-w-[80%] border-primary/15 bg-background/80 px-3.75 py-3 backdrop-blur-md">
-				<div class="mb-2 flex items-center justify-between gap-3 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
-					<span>Live Attention</span>
-					<span>
+			<div
+				class={`live-attention-wrapper ${disableAutoScroll ? 'live-attention-wrapper--sticky' : ''}`}
+				bind:this={liveAttentionWrapper}
+			>
+				<Card class="live-attention-card w-full max-w-[min(720px,100%)] border-primary/15 bg-background/80 px-3.75 py-3 backdrop-blur-md">
+					<div class="mb-2 flex items-center justify-between gap-3 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+						<span>Live Attention</span>
+						<span>
 							{#if attentionView.layer !== undefined}
 								L{attentionView.layer + 1}
 							{/if}
@@ -359,6 +365,7 @@
 						{/each}
 					</div>
 				</Card>
+			</div>
 		{/if}
 
 		{#if message.timestamp}
@@ -478,6 +485,23 @@
 		opacity: 0.92;
 		white-space: pre-wrap;
 		word-break: break-word;
+	}
+
+	.live-attention-wrapper {
+		width: 100%;
+		display: flex;
+		justify-content: center;
+	}
+
+	.live-attention-wrapper--sticky {
+		position: sticky;
+		top: 1.5rem;
+		left: 0;
+		z-index: 12;
+	}
+
+	.live-attention-card {
+		width: 100%;
 	}
 
 </style>
