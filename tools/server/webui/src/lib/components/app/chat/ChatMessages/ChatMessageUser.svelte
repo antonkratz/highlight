@@ -49,9 +49,7 @@
 	let isMultiline = $state(false);
 	let messageElement: HTMLElement | undefined = $state();
 	let currentConfig = $derived(config());
-	let disableAutoScroll = $derived(Boolean(config().disableAutoScroll));
 	let attentionContextElement: HTMLDivElement | undefined = $state();
-	let liveAttentionWrapper: HTMLDivElement | undefined = $state();
 
 	type AttentionHit = ChatAttentionItem & {
 		rank: number;
@@ -305,67 +303,62 @@
 		{/if}
 
 		{#if message.attentionTrace && attentionView.segments.length > 0}
-			<div
-				class={`live-attention-wrapper ${disableAutoScroll ? 'live-attention-wrapper--sticky' : ''}`}
-				bind:this={liveAttentionWrapper}
-			>
-				<Card class="live-attention-card w-full max-w-[min(720px,100%)] border-primary/15 bg-background/80 px-3.75 py-3 backdrop-blur-md">
-					<div class="mb-2 flex items-center justify-between gap-3 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
-						<span>Live Attention</span>
-						<span>
-							{#if attentionView.layer !== undefined}
-								L{attentionView.layer + 1}
-							{/if}
-							t{attentionView.tokenIndex}
-						</span>
-					</div>
-
-					<div class="mb-3 flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
-						<span class="attention-legend attention-legend--prefix">Original prefix</span>
-						{#if attentionView.hasGenerated}
-							<span class="attention-legend attention-legend--generated">Generated continuation</span>
+			<Card class="max-w-[80%] border-primary/15 bg-background/80 px-3.75 py-3 backdrop-blur-md">
+				<div class="mb-2 flex items-center justify-between gap-3 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+					<span>Live Attention</span>
+					<span>
+						{#if attentionView.layer !== undefined}
+							L{attentionView.layer + 1}
 						{/if}
-					</div>
+						t{attentionView.tokenIndex}
+					</span>
+				</div>
 
-					<div class="mb-3 grid gap-2 md:grid-cols-3">
-						{#each attentionView.previews as preview}
-							<div
-								class="attention-preview-card"
-								style={`--attention-card-color:${preview.color};--attention-card-light:${preview.light};--attention-card-strong:${preview.strong};`}
-							>
-								<div class="attention-preview-card__label">
-									<span>{preview.label}</span>
-									<span class="attention-preview-card__head">
-										Head {preview.head ?? 0} • t{preview.tokenIndex}
-									</span>
-								</div>
-								<div class="attention-preview-card__text">{preview.text}</div>
-							</div>
-						{/each}
-					</div>
+				<div class="mb-3 flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
+					<span class="attention-legend attention-legend--prefix">Original prefix</span>
+					{#if attentionView.hasGenerated}
+						<span class="attention-legend attention-legend--generated">Generated continuation</span>
+					{/if}
+				</div>
 
-					<div
-						class="attention-context max-h-52 overflow-y-auto whitespace-pre-wrap break-words font-mono text-xs leading-6 text-foreground/90"
-						bind:this={attentionContextElement}
-					>
-						{#each attentionView.segments as segment}
-							{#if segment.boundary}
-								<div class="attention-boundary">Generated continuation</div>
-							{:else if segment.hit}
-								<span
-									class={`attention-hit attention-hit--${segment.region}`}
-									style={`--attention-strength:${Math.max(0.18, segment.hit.weight)}; --attention-color:${segment.hit.color}; --attention-light:${segment.hit.light}; --attention-strong:${segment.hit.strong};`}
-									title={`context token ${segment.hit.token_index} • weight ${segment.hit.weight.toFixed(3)}`}
-								>
-									<span class="attention-hit__marker">{segment.hit.rank}</span>{segment.text}
+				<div class="mb-3 grid gap-2 md:grid-cols-3">
+					{#each attentionView.previews as preview}
+						<div
+							class="attention-preview-card"
+							style={`--attention-card-color:${preview.color};--attention-card-light:${preview.light};--attention-card-strong:${preview.strong};`}
+						>
+							<div class="attention-preview-card__label">
+								<span>{preview.label}</span>
+								<span class="attention-preview-card__head">
+									Head {preview.head ?? 0} • t{preview.tokenIndex}
 								</span>
-							{:else}
-								<span class={`attention-segment attention-segment--${segment.region}`}>{segment.text}</span>
-							{/if}
-						{/each}
-					</div>
-				</Card>
-			</div>
+							</div>
+							<div class="attention-preview-card__text">{preview.text}</div>
+						</div>
+					{/each}
+				</div>
+
+				<div
+					class="attention-context max-h-52 overflow-y-auto whitespace-pre-wrap break-words font-mono text-xs leading-6 text-foreground/90"
+					bind:this={attentionContextElement}
+				>
+					{#each attentionView.segments as segment}
+						{#if segment.boundary}
+							<div class="attention-boundary">Generated continuation</div>
+						{:else if segment.hit}
+							<span
+								class={`attention-hit attention-hit--${segment.region}`}
+								style={`--attention-strength:${Math.max(0.18, segment.hit.weight)}; --attention-color:${segment.hit.color}; --attention-light:${segment.hit.light}; --attention-strong:${segment.hit.strong};`}
+								title={`context token ${segment.hit.token_index} • weight ${segment.hit.weight.toFixed(3)}`}
+							>
+								<span class="attention-hit__marker">{segment.hit.rank}</span>{segment.text}
+							</span>
+						{:else}
+							<span class={`attention-segment attention-segment--${segment.region}`}>{segment.text}</span>
+						{/if}
+					{/each}
+				</div>
+			</Card>
 		{/if}
 
 		{#if message.timestamp}
@@ -485,23 +478,6 @@
 		opacity: 0.92;
 		white-space: pre-wrap;
 		word-break: break-word;
-	}
-
-	.live-attention-wrapper {
-		width: 100%;
-		display: flex;
-		justify-content: center;
-	}
-
-	.live-attention-wrapper--sticky {
-		position: sticky;
-		top: 1.5rem;
-		left: 0;
-		z-index: 12;
-	}
-
-	.live-attention-card {
-		width: 100%;
 	}
 
 </style>
