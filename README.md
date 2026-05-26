@@ -1,4 +1,5 @@
 # Live Transformer Attention in llama.cpp
+![Live Attention recording](simplescreenrecorder-2026-04-07_15.05.18.gif)
 
 This branch adds a live attention view to the llama.cpp WebUI. It shows where the model is paying attention while it generates each next token.
 
@@ -6,7 +7,6 @@ The goal is to make transformer attention easier to understand while generation 
 
 ![Live Attention screenshot](Screenshot_2026-04-07_15-18-24.png)
 
-![Live Attention recording](simplescreenrecorder-2026-04-07_15.05.18.gif)
 
 ## What It Shows
 
